@@ -5,7 +5,8 @@ module Lib
     , plus4Times100_fast
     , filter_div6_slow
     , filter_div6_fast
-    , filter_div6_fast2 ) where
+    , filter_div6_fast2
+    , yfiltered_functor ) where
 
 import Prelude hiding (map,Functor,fmap,filter,and)
 
@@ -101,10 +102,9 @@ plus4Times100_fast = lowerYoneda . fmap (*100) . fmap (+4) . liftYoneda
 -- FILTERS --
 
 -- Classic list filters
-filter :: (a -> Bool) -> [a] -> [a]
-filter p []     = []
-filter p (a:as) = if p a then a:(filter p as) else filter p as
-
+listFilter :: (a -> Bool) -> [a] -> [a]
+listFilter p []     = []
+listFilter p (a:as) = if p a then a:(listFilter p as) else listFilter p as
 -- Claim: filter p . filter q = filter (\x -> (p x) && (q x))
 -- Proof:
 --
@@ -123,13 +123,14 @@ filter p (a:as) = if p a then a:(filter p as) else filter p as
 
 -- Here's the class of structures that can be Filtered
 class Filtered f where
-  filt :: (a -> Bool) -> f a -> f a
--- Laws: 1. filt (\x -> True) = id
---       2. filt p . filt q = filt (\x -> p x && q x)
+  filter :: (a -> Bool) -> f a -> f a
+-- Filter Laws:
+-- 1. filter (\x -> True) = id
+-- 2. filter p . filter q = filter (\x -> p x && q x)
 
 -- Lists can be filtered
 instance Filtered [] where
-  filt = filter
+  filter = listFilter
 
 -- Introduce a useful way of combining predicates
 and :: (a -> Bool) -> (a -> Bool) -> (a -> Bool)
@@ -141,7 +142,7 @@ filter_div6_slow =
   let p = \x -> x `mod` 2 == 0
       q = \x -> x `mod` 3 == 0
   in
-    filt p . filt q
+    filter p . filter q
 
 -- Tweaking the same to traverse once to get the same result
 filter_div6_fast :: Filtered f => f Int -> f Int
@@ -149,34 +150,34 @@ filter_div6_fast =
   let p = \x -> x `mod` 2 == 0
       q = \x -> x `mod` 3 == 0
   in
-    filt (p `and` q)
+    filter (p `and` q)
 
 -- We can play a similar game as above to get cheaper filtering:
 data YFiltered f a = YFiltered { unFiltered :: (a -> Bool) -> f a }
 
--- YFiltered is Filtered by combining predicates using `and`. Running "filt" is constant-time here
+-- YFiltered is Filtered by combining predicates using `and`. Running "filter" is constant-time here
 instance Filtered (YFiltered f) where
-  filt p1 (YFiltered pfa) = YFiltered (\p2 -> pfa (p1 `and` p2))
--- Law 1: filt (\x -> True) = id
+  filter p1 (YFiltered pfa) = YFiltered (\p2 -> pfa (p1 `and` p2))
+-- Filter Law 1: filter (\x -> True) = id
 -- Proof:
--- filt (\x -> True) (YFiltered pfa)
+-- filter (\x -> True) (YFiltered pfa)
 -- = YFiltered (\p2 -> pfa ((\x -> True) `and` p2))
 -- = YFiltered (\p2 -> pfa p2)
 -- = YFiltered pfa
 --
--- Law 2: filt p . filt q = filt (p `and` q)
+-- Filter Law 2: filter p . filter q = filter (p `and` q)
 -- Proof:
--- (filt p . filt q) (YFiltered pfa)
--- = filt p (filt q (YFiltered pfa))
--- = filt p (YFiltered (\p2 -> pfa (q `and` p2)))
+-- (filter p . filter q) (YFiltered pfa)
+-- = filter p (filter q (YFiltered pfa))
+-- = filter p (YFiltered (\p2 -> pfa (q `and` p2)))
 -- = YFiltered (\p3 -> (\p2 -> pfa (q `and` p2)) (p `and` p3))
 -- = YFiltered (\p3 -> pfa (q `and` (p `and` p3)))
 -- = YFiltered (\p2 -> pfa ((p `and` q) `and` p2))
--- = filt (p `and` q) (YFiltered pfa)
+-- = filter (p `and` q) (YFiltered pfa)
 
 -- We can lift any Filtered structure to one where we delay filtering
 liftFiltered :: Filtered f => f a -> YFiltered f a
-liftFiltered fa = YFiltered (flip filt fa)
+liftFiltered fa = YFiltered (flip filter fa)
 
 -- Once we are done setting up filters, we can lower back down again to execute all filters
 -- in a single traversal
@@ -190,8 +191,61 @@ filter_div6_fast2 =
   let p = \x -> x `mod` 2 == 0
       q = \x -> x `mod` 3 == 0
   in
-    lowerFiltered . filt p . filt q . liftFiltered
+    lowerFiltered . filter p . filter q . liftFiltered
+
+-- If f is a functor then so is YFiltered f
+instance Functor f => Functor (YFiltered f) where
+  fmap f (YFiltered pfa) = YFiltered (\pb -> fmap f (pfa (pb.f)))
+-- Functor Law 1: fmap id = id
+-- Proof:
+-- fmap id (YFiltered pfa)
+-- = YFiltered (\pb -> fmap id (pfa (pb.id)))
+-- = YFiltered (\pb -> pfa pb)  since fmap id = id for functor "f"
+-- = YFiltered pfa  (by eta reduction)
+--
+-- Functor Law 2: fmap g . fmap f = fmap (g.f)
+-- Proof:
+-- (fmap g . fmap f) (YFiltered pfa)
+-- = fmap g (fmap f (YFiltered pfa))
+-- = fmap g (YFiltered (\pb -> fmap f (pfa (pb.f))))
+-- = YFiltered (\pc -> fmap g ((\pb -> fmap f (pfa (pb.f))) (pc.g)))
+-- = YFiltered (\pc -> fmap g (fmap f (pfa (pc.g.f))))
+-- = YFiltered (\pc -> fmap (g.f) (pfa (g.f)))  since fmap g . fmap f = fmap (g.f) for underlying functor "f"
+-- = fmap (g.f) (YFiltered pfa)
+
+-- Example of inheriting the functor instance for f
+yfiltered_functor :: (Functor f, Filtered f) => f Int -> f Int
+yfiltered_functor =
+  lowerFiltered
+  . filter (\x -> x `mod` 12 == 0)
+  . fmap (*3)
+  . filter (\x -> x `mod` 2 == 0)
+  . liftFiltered
+
+-- Unfortunately we have no reason to expect efficient filtering for Yoneda f a since in general none
+-- of the elements of f a are computed yet! This means that Yoneda f is not Filtered even if f is Filtered.
+-- In the end we pay at least two traversals: one to compute elements of f a, and another to filter them.
+-- It's possible to separate maps and filters in a pipeline to ensure at most two traversals:
+
+-- Example: Moving maps left past filters
+-- Claim: filter p . map f = map f . filter (\x -> p (f x))
+--
+-- Proof:
+-- Case 1: (filter p . map f) [] = filter p [] = [] = map f [] = (map f . filter (\x -> p (f x))) []
+--
+-- Case 2:
+-- (filter p . map f) (a:as)
+-- = filter p (f a : map f as)
+-- = if p (f a) then f a : filter p (map f as) else filter p (map f as)
+-- = if p (f a) then f a : (map f . filter (\x -> p (f x))) as else (map f . filter (\x -> p (f x)) as [by induction]
+-- = map f (if p (f a) then a : filter (\x -> p (f x)) as else filter (\x -> p (f x)) as)
+-- = (map f . filter (\x -> p (f x))) (a:as)
+
+-- Maps and filters fuse as above, so we get at most two traversals for any pipeline of maps and filters.
+-- Can we do better?
 
 
 -- FOLDS --
 
+-- Textbook right fold
+-- foldr :: (
