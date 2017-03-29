@@ -8,7 +8,7 @@ module Lib
     , filter_div6_fast2
     , yfiltered_functor ) where
 
-import Prelude hiding (map,Functor,fmap,filter,and)
+import Prelude hiding (map,Functor,fmap,filter,and,foldr)
 
 -- MAPS --
 
@@ -224,8 +224,8 @@ yfiltered_functor =
 
 -- Unfortunately we have no reason to expect efficient filtering for Yoneda f a since in general none
 -- of the elements of f a are computed yet! This means that Yoneda f is not Filtered even if f is Filtered.
--- In the end we pay at least two traversals: one to compute elements of f a, and another to filter them.
--- It's possible to separate maps and filters in a pipeline to ensure at most two traversals:
+-- In the end we pay at least two traversals with this approach: one to compute elements of f a, and another
+-- to filter them. It's possible to separate maps and filters in a pipeline to ensure *at most* two traversals:
 
 -- Example: Moving maps left past filters
 -- Claim: filter p . map f = map f . filter (\x -> p (f x))
@@ -241,11 +241,44 @@ yfiltered_functor =
 -- = map f (if p (f a) then a : filter (\x -> p (f x)) as else filter (\x -> p (f x)) as)
 -- = (map f . filter (\x -> p (f x))) (a:as)
 
--- Maps and filters fuse as above, so we get at most two traversals for any pipeline of maps and filters.
+-- So maps fuse with eachother and filters fuse with eachother, and maps move left past filters, so we
+-- get at most two traversals for any pipeline of maps and filters.
 -- Can we do better?
 
 
 -- FOLDS --
 
--- Textbook right fold
--- foldr :: (
+-- Textbook right fold for lists
+foldr :: (a -> b -> b) -> b -> [a] -> b
+foldr f z []     = z
+foldr f z (a:as) = f a (foldr f z as)
+
+-- Maps are folds
+-- map f = foldr (\x acc -> f x : acc) []
+
+-- Filters are folds
+-- filter p = foldr (\x acc -> if p x then x : acc else acc) []
+
+-- Claim: map f . filter p = foldr (\x acc -> if p x then f x : acc else acc) []
+--
+-- Proof:
+-- Case 1: (map f . filter p) [] = map f (filter p []) = [] = foldr (\x acc -> if p x then x:acc else acc) [] []
+--
+-- Case 2:
+-- (map f . filter p) (a:as)
+-- = map f (filter p (a:as))
+-- = map f (foldr (\x acc -> if p x then x : acc else acc) [] (a:as))
+-- = map f (if p a then a : (foldr k [] as) else (foldr k [] as))
+--     where k = \x acc -> if p x then x:acc else acc
+-- = if p a then f a : map f (filter p as) else map f (filter p as)
+-- = if p a then f a : (foldr j [] as) else (foldr j [] as)  [by induction]
+--     where j = \x acc -> if p x then f x:acc else acc
+-- = (\x acc -> if p x then f x : acc else acc) a (foldr j [] as)
+-- = foldr (\x acc -> if p x then f x : acc else acc) [] (a:as)
+
+-- In other words, every map following a filter can be fused into a single traversal (at least for lists). Upshot:
+-- every composition of maps and filters on lists can be rewritten as a single traversal.
+-- (This is because maps and filters are both examples of *catamorphisms* on lists, so catamorphism composition
+--  applies)
+
+
