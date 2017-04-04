@@ -281,4 +281,36 @@ foldr f z (a:as) = f a (foldr f z as)
 -- (This is because maps and filters are both examples of *catamorphisms* on lists, so catamorphism composition
 --  applies)
 
+-- Foldr Fusion Law:
+--
+-- Duplicate every element of the input list and then take the length. This costs two traversals since "length" itself
+-- is a traversal
+doubleElts :: [a] -> Int
+doubleElts = length . foldr (\x y -> x:x:y) []
+
+-- Claim: length . foldr (\x y -> x:x:y) [] = foldr (\x y -> 2 + y) 0
+-- Observations:
+-- 1. If this works, it reduces us back down to one traversal
+-- 2. length [] = 0
+-- 3. length (x:x:y) = f (g x y) = length (x:x:[]) + length y = h x (f y) where f = length, g x y = x:x:y.
+-- Here h x y = length (x:x:[]) + y = 2 + y
+
+doubleEltsFused :: [a] -> Int
+doubleEltsFused = foldr (\x y -> 2 + y) 0
+
+-- More General Claim: Suppose there is an h such that f (g x y) = h x (f y). Then f . foldr g a = foldr h (f a)
+-- Proof:
+-- Case 1: (f . foldr g a) [] = f (foldr g a []) = f a = foldr h (f a) [] = (foldr h (f a)) []
+--
+-- Case 2:
+-- (f . foldr g a) (a:as)
+-- = f (foldr g a (a:as))
+-- = f (g a (foldr g a as))
+-- = h a (f (foldr g a as))
+-- = h a (foldr h (f a) as)  [by induction]
+-- = foldr h (f a) (a:as)
+--
+-- As above, this is useful if we have a fold that builds up a big accumulator that we want to traverse again
+-- afterwards.
+
 
