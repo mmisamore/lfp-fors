@@ -8,7 +8,7 @@ module Lib
     , filter_div6_fast2
     , yfiltered_functor ) where
 
-import Prelude hiding (map,Functor,fmap,filter,and,foldr)
+import Prelude hiding (map,Functor,fmap,filter,and,foldr,scanr)
 
 -- MAPS --
 
@@ -278,8 +278,8 @@ foldr f z (a:as) = f a (foldr f z as)
 
 -- In other words, every map following a filter can be fused into a single traversal (at least for lists). Upshot:
 -- every composition of maps and filters on lists can be rewritten as a single traversal.
--- (This is because maps and filters are both examples of *catamorphisms* on lists, so catamorphism composition
---  applies)
+-- This generalizes beyond lists in the form of *catamorphism composition*.
+
 
 -- Foldr Fusion Law:
 --
@@ -311,6 +311,60 @@ doubleEltsFused = foldr (\x y -> 2 + y) 0
 -- = foldr h (f a) (a:as)
 --
 -- As above, this is useful if we have a fold that builds up a big accumulator that we want to traverse again
--- afterwards.
+-- afterwards. This captures the intuition of "simplifying as you go" instead of "simplifying at the end".
+-- To apply this to things other than lists you can study *catamorphism fusion*.
 
+
+-- SCANS --
+-- The below derivation is due to Conal Elliott
+
+-- Here "tails" returns all tails of a list, starting with the entire list, and then the tail of that list,
+-- and the tail of that list, and so on until the empty list
+tails :: [a] -> [[a]]
+tails [] = [[]]
+tails as = as : tails (tail as)
+
+-- Scans generalize folds by keeping all of the intermediate accumulators.
+-- Here's a naive definition:
+scanr :: (a -> b -> b) -> b -> [a] -> [b]
+scanr f z as = map (foldr f z) (tails as)
+-- The above definition is quadratic time at best because we fold over each of the tails separately!
+-- Can we do better? Let's derive a more efficient implementation!
+
+-- Claim: head (scanr f z as) = foldr f z as
+-- Proof:
+-- head (scanr f z as)
+-- = head (map (foldr f z) (tails as))
+-- = head (map (foldr f z) (as : tails (tail as)))
+-- = head (foldr f z as : ...)
+-- = foldr f z as
+
+-- Main derivation of more efficient scanr:
+--
+-- Case 1:
+-- scanr f z []
+-- = map (foldr f z) (tails [])
+-- = map (foldr f z) [[]]
+-- = [foldr f z []]
+-- = [z]
+
+-- Case 2:
+-- scanr f z (a:as)
+-- = map (foldr f z) (tails (a:as))
+-- = map (foldr f z) ((a:as) : tails as)           [definition of tails]
+-- = foldr f z (a:as) : map (foldr f z) (tails as)
+-- = foldr f z (a:as) : scanr f z as               [definition of scanr]
+-- = f a (foldr f z as) : scanr f z as             [definition of foldr]
+-- = f a (head (scanr f z as)) : scanr f z as      [above Claim]
+-- = f a (head r) : r   where r = scanr f z as     [capture common subexpression]
+
+-- This builds the desired list of intermediate results in linear time, just like foldr
+-- Upshot: scanning can be as cheap as folding!
+better_scanr :: (a -> b -> b) -> b -> [a] -> [b]
+better_scanr f z []     = [z]
+better_scanr f z (a:as) = f a (head r) : r
+    where r = scanr f z as
+
+-- Big picture: these are pure functional programs so the lists here are *persistent*.
+-- Therefore we can hold onto all intermediate results with just a few extra pointers.
 
