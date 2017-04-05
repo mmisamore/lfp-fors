@@ -316,6 +316,7 @@ doubleEltsFused = foldr (\x y -> 2 + y) 0
 
 
 -- SCANS --
+
 -- The below derivation is due to Conal Elliott
 
 -- Here "tails" returns all tails of a list, starting with the entire list, and then the tail of that list,
